@@ -1,8 +1,10 @@
 import logging
+import math
 import socket
 import subprocess
 import sys
 import threading
+import time
 from io import BytesIO
 
 
@@ -16,16 +18,17 @@ def recvall(sock, n):
     return data
 
 
-def convert_data(data):
-    # p = subprocess.Popen(['ffmpeg', '-i', 'pipe:', '-c:v', 'libx264', '-f', 'h264', 'pipe:']
-    #                     , stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=sys.stderr.buffer)
-    # p.stdin.write(data)
-    # p.stdin.close()
-    # result = p.stdout.read()
-    p = subprocess.run(['ffmpeg', '-f', 'h264', '-i', '-', '-c:v', 'libx264', '-preset', 'veryfast', '-f', 'h264', '-'],
-                       stdout=subprocess.PIPE, input=data)  # , stderr=sys.stderr.buffer
+def socketCopyToAndClose(src: socket.socket, dest, count):
+    left = count
+    while left != 0:
+        readed = src.recv(left)
+        if not readed:
+            time.sleep(0.01)
+            continue
+        left -= len(readed)
+        dest.write(readed)
 
-    return p.stdout
+    dest.close()
 
 
 class CloudNode:
@@ -53,11 +56,14 @@ class CloudNode:
         while True:
             logging.info(f"Receive Work Data")
             dataLen = int.from_bytes(recvall(clientSocket, 4), byteorder='big')
-            data = clientSocket.recv(dataLen)
-            logging.info(f"Receive Work Data: {dataLen}")
 
             logging.info(f"Processing...")
-            converted = convert_data(data)
+            p = subprocess.Popen(['ffmpeg', '-f', 'mpegts', '-i', '-',
+                                  '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'veryfast', '-f', 'mpegts', '-'],
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            copy = threading.Thread(target=socketCopyToAndClose, args=(clientSocket, p.stdin, dataLen,))
+            copy.start()
+            converted = p.stdout.read()
 
             logging.info(f"Sending Result Data")
             clientSocket.sendall('Done!'.encode())

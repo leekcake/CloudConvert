@@ -28,7 +28,7 @@ def get_length(input_video):
 
 def get_data(src, inx):
     result = subprocess.run(
-        ['ffmpeg', '-i', src, '-ss', str(inx * 60), '-t', '60', '-c', 'copy', '-f', 'h264', '-'],
+        ['ffmpeg', '-i', src, '-ss', str(inx * 60), '-t', '60', '-c', 'copy', '-f', 'mpegts', '-'],
         stdout=subprocess.PIPE)
     return result.stdout
 
@@ -175,7 +175,7 @@ class CloudServer:
             self.workInxs.append(inx)
 
         # Open ffmpeg for combine
-        pp = subprocess.Popen(['ffmpeg', '-f', 'h264', '-i', 'pipe:', "-c", "copy", "-y", dest],
+        pp = subprocess.Popen(['ffmpeg', '-f', 'mpegts', '-i', 'pipe:', "-c", "copy", "-y", dest],
                               stdout=sys.stdout.buffer,
                               stdin=subprocess.PIPE, stderr=sys.stderr.buffer)
 
