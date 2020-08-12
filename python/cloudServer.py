@@ -217,8 +217,8 @@ class CloudServer:
                         logging.info(f"Receive work result, number {processor.workInx}")
                         self.doneData[processor.workInx] = processor.outputData
                         self.doneInxs[processor.workInx] = True
+                        del (self.preload[processor.workInx])
 
-                    del (self.preload[processor.workInx])
                     processor.clearProcessor()
 
                 # If no work left or can't provide work in now, prevent provide work
