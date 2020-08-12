@@ -4,11 +4,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
-import android.os.Build
-import android.os.Handler
-import android.os.IBinder
-import android.os.Looper
+import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.arthenica.mobileffmpeg.Config
@@ -95,6 +93,14 @@ class MyService : Service() {
         }
 
         val thread = Thread {
+            val wakeLockTag = "CloudConvert::Service"
+
+            val wakeLock: PowerManager.WakeLock =
+                (getSystemService(Context.POWER_SERVICE) as PowerManager).run {
+                    newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, wakeLockTag).apply {
+                        acquire()
+                    }
+                }
             val addr = "192.168.0.139"
             Thread.sleep(1000)
             while (true) {
