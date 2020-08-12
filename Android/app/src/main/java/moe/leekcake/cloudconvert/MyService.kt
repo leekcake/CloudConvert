@@ -203,7 +203,7 @@ class MyService : Service() {
                 } catch (ex: Exception) {
                     ex.printStackTrace()
                     makeLogAndUpdate("예외: ${ex.message}")
-                    Thread.sleep(10000)
+                    Thread.sleep(1000)
                 }
             }
         }

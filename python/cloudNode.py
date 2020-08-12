@@ -73,5 +73,5 @@ class CloudNode:
                     clientSocket.sendall(converted)
             except Exception as ex:
                 print(ex)
-                print("Retry after 10 seconds")
-                time.sleep(10)
+                print("Retry after 1 seconds")
+                time.sleep(1)
