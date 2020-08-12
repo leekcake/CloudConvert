@@ -111,7 +111,7 @@ class MyService : Service() {
                         socket = Socket(addr, 39000)
                     } catch (ex: Exception) {
                         makeLogAndUpdate("오류: 연결 불가")
-                        Thread.sleep(10000)
+                        Thread.sleep(1000)
                         continue
                     }
                     val In = DataInputStream(socket.getInputStream())
@@ -123,7 +123,7 @@ class MyService : Service() {
                     if (String(header) != "Node?") {
                         socket.close()
                         makeLogAndUpdate("오류: 호스트 비 정상")
-                        Thread.sleep(10000)
+                        Thread.sleep(1000)
                         continue
                     }
                     Out.write("Yes!".toByteArray())
