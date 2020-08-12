@@ -103,7 +103,7 @@ class MyService : Service() {
                 }
             val addr = "192.168.0.139"
             Thread.sleep(1000)
-            while (true) {
+            while ( !Thread.interrupted() ) {
                 try {
                     makeLogAndUpdate("서버와 연결 시도중...")
                     val socket: Socket
@@ -212,6 +212,8 @@ class MyService : Service() {
                     Thread.sleep(1000)
                 }
             }
+
+            wakeLock.release()
         }
         thread.start()
 
