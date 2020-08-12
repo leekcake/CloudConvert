@@ -232,7 +232,7 @@ class CloudServer:
                     if len(self.workInxs) == 0:
                         proc: Processor
                         for proc in self.processors:
-                            if not proc.isIdle():
+                            if not proc.isIdle() and proc.workInx in self.preload:
                                 workInx = proc.workInx
                         if workInx == -1:
                             continue
