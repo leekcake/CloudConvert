@@ -77,8 +77,11 @@ class CloudServer:
         self.started = False
         self.processors = []
         self.workInxs = []
+        self.preload = {}
         self.doneData = {}
+        self.doneInxs = {}
         self.lock = threading.Lock()
+        self.clientSockets = []
 
     def startServer(self):
         self.started = True
@@ -106,18 +109,33 @@ class CloudServer:
         server_socket.listen()
         while True:
             client_socket, addr = server_socket.accept()
+            self.clientSockets.append(client_socket)
             t = threading.Thread(target=self._thread_client, args=(client_socket, addr,))
             t.start()
 
+
+    def _thread_preload(self, src):
+        while True:
+            for workInx in self.workInxs[:21]:
+                if workInx not in self.preload:
+                    self.preload[workInx] = get_data(src, workInx)
+
+            time.sleep(1)
+
     def _thread_client(self, clientSocket: socket.socket, addr):
         name = str(addr)
-        clientSocket.sendall('Node?'.encode())
+        try:
+            clientSocket.sendall('Node?'.encode())
 
-        # It's not valid node :(
-        handshake = clientSocket.recv(4).decode()
-        if handshake != 'Yes!':
-            logging.error(f"Handshake failure: {handshake}")
-            clientSocket.close()
+            # It's not valid node :(
+            handshake = clientSocket.recv(4).decode()
+            if handshake != 'Yes!':
+                logging.error(f"Handshake failure: {handshake}")
+                clientSocket.close()
+                self.clientSockets.remove(clientSocket)
+                return
+        except:
+            self.clientSockets.remove(clientSocket)
             return
 
         logging.info(f"New node({name}) connected")
@@ -160,12 +178,20 @@ class CloudServer:
             print(e)
             pass
 
+        try:
+            clientSocket.close()
+        except:
+            pass
+        self.clientSockets.remove(clientSocket)
         logging.info(f"{name}: disconnected")
         self.unregisterProcessor(processor)
 
     def convert(self, src, dest):
         if not self.started:
             raise Exception("convert before startServer")
+
+        t = threading.Thread(target=self._thread_preload, args=(src,))
+        t.start()
 
         # Get Duration from file and make work inxs
         duration = get_length(src)
@@ -184,19 +210,35 @@ class CloudServer:
             for processor in self.processors:
                 # If processor finished work and waiting for done
                 if processor.isMarkedAsFinished():
-                    logging.info(f"Work end detected, number {processor.workInx}")
-                    self.doneData[processor.workInx] = processor.outputData
-                    processor.clearProcessor()
-                    pass
+                    if processor.workInx in self.doneInxs:
+                        logging.info(
+                            f"Receive work result but already done by another node, number {processor.workInx}")
+                    else:
+                        logging.info(f"Receive work result, number {processor.workInx}")
+                        self.doneData[processor.workInx] = processor.outputData
+                        self.doneInxs[processor.workInx] = True
 
-                # If no work left, prevent provide work
-                if len(self.workInxs) == 0:
+                    del (self.preload[processor.workInx])
+                    processor.clearProcessor()
+
+                # If no work left or can't provide work in now, prevent provide work
+                if len(self.workInxs) != 0 and self.workInxs[0] not in self.preload:
                     continue
+
                 # If processor didn't have any work
                 if processor.isIdle():
                     # Provide work
-                    workInx = self.workInxs.pop(0)
-                    processor.provideNewWork(workInx, get_data(src, workInx))
+                    workInx = -1
+                    if len(self.workInxs) == 0:
+                        proc: Processor
+                        for proc in self.processors:
+                            if not proc.isIdle():
+                                workInx = proc.workInx
+                        if workInx == -1:
+                            continue
+                    else:
+                        workInx = self.workInxs.pop(0)
+                    processor.provideNewWork(workInx, self.preload[workInx])
 
             # Push to ffmpeg,
             while True:
@@ -210,7 +252,10 @@ class CloudServer:
             if pushInx == maxInx + 1:
                 break
 
-            time.sleep(1)
+            time.sleep(0.1)
 
         pp.stdin.close()
         pp.wait()
+
+        for sock in self.clientSockets:
+            sock.close()
