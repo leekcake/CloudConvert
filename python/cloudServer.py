@@ -40,6 +40,7 @@ class Processor:
         self.InWork = False
         self.outputData: bytes = None
         self.isFinish = False
+        self.inValid = False
 
     def clearProcessor(self):
         self.workInx = -1
@@ -47,6 +48,7 @@ class Processor:
         self.workData = None
         self.outputData = None
         self.isFinish = False
+        self.inValid = False
 
     def provideNewWork(self, inx, data):
         if self.InWork:
@@ -54,9 +56,13 @@ class Processor:
         self.InWork = True
         self.workData = data
         self.workInx = inx
+        self.inValid = False
 
     def clearWorkData(self):
         self.workData = None
+
+    def markAsInvalid(self):
+        self.inValid = True
 
     def markAsFinished(self, result):
         self.isFinish = True
@@ -76,31 +82,29 @@ class CloudServer:
     def __init__(self):
         self.started = False
         self.processors = []
+        self.processLock = threading.Lock()
+
         self.workInxs = []
+        self.preload = {}
+        self.reqInxs = {}
+        self.doneData = {}
+        self.doneInxs = {}
+
+    def clearConvertValue(self):
+        self.workInxs = []
+        self.reqInxs = {}
         self.preload = {}
         self.doneData = {}
         self.doneInxs = {}
-        self.lock = threading.Lock()
-        self.clientSockets = []
+
+        processor: Processor
+        for processor in self.processors:
+            processor.markAsInvalid()
 
     def startServer(self):
         self.started = True
         t = threading.Thread(target=self._thread_server)
         t.start()
-
-    def registerProcessor(self, processor):
-        self.lock.acquire()
-        self.processors.append(processor)
-        self.lock.release()
-
-    def unregisterProcessor(self, processor):
-        self.lock.acquire()
-        if processor.InWork:
-            logging.info(f"Work Inx: {processor.workInx} was re-requested because gone of processor")
-            # if processor leave without finish work, re-register work
-            self.workInxs.insert(0, processor.workInx)
-        self.processors.remove(processor)
-        self.lock.release()
 
     def _thread_server(self):
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -109,13 +113,25 @@ class CloudServer:
         server_socket.listen()
         while True:
             client_socket, addr = server_socket.accept()
-            self.clientSockets.append(client_socket)
             t = threading.Thread(target=self._thread_client, args=(client_socket, addr,))
             t.start()
 
+    def registerProcessor(self, processor):
+        self.processLock.acquire()
+        self.processors.append(processor)
+        self.processLock.release()
+
+    def unregisterProcessor(self, processor):
+        self.processLock.acquire()
+        if processor.InWork and processor.workInx not in self.doneInxs and processor.workInx in self.reqInxs:
+            logging.info(f"Work Inx: {processor.workInx} was re-requested because gone of processor")
+            # if processor leave without finish work, re-register work
+            self.workInxs.insert(0, processor.workInx)
+        self.processors.remove(processor)
+        self.processLock.release()
 
     def _thread_preload(self, src):
-        while True:
+        while threading.currentThread().name.startswith("live"):
             for workInx in self.workInxs[:21]:
                 if workInx not in self.preload:
                     self.preload[workInx] = get_data(src, workInx)
@@ -132,10 +148,8 @@ class CloudServer:
             if handshake != 'Yes!':
                 logging.error(f"Handshake failure: {handshake}")
                 clientSocket.close()
-                self.clientSockets.remove(clientSocket)
                 return
         except:
-            self.clientSockets.remove(clientSocket)
             return
 
         logging.info(f"New node({name}) connected")
@@ -148,7 +162,7 @@ class CloudServer:
             while True:
                 # Work not provided yet?
                 if not processor.isCanStartWork():
-                    time.sleep(1)
+                    time.sleep(0.1)
                     continue
 
                 logging.info(f"{name}: Send work")
@@ -182,15 +196,19 @@ class CloudServer:
             clientSocket.close()
         except:
             pass
-        self.clientSockets.remove(clientSocket)
+
+        try:
+            self.unregisterProcessor(processor)
+        except:
+            pass
         logging.info(f"{name}: disconnected")
-        self.unregisterProcessor(processor)
 
     def convert(self, src, dest):
         if not self.started:
             raise Exception("convert before startServer")
 
         t = threading.Thread(target=self._thread_preload, args=(src,))
+        t.setName("live-Preloader")
         t.start()
 
         # Get Duration from file and make work inxs
@@ -207,16 +225,21 @@ class CloudServer:
 
         pushInx = 0
         while True:
+            self.processLock.acquire()
             for processor in self.processors:
                 # If processor finished work and waiting for done
                 if processor.isMarkedAsFinished():
                     if processor.workInx in self.doneInxs:
                         logging.info(
                             f"Receive work result but already done by another node, number {processor.workInx}")
+                    elif processor.inValid or processor.workInx not in self.reqInxs:
+                        logging.info(
+                            f"Old work result dropped: {processor.workInx}")
                     else:
                         logging.info(f"Receive work result, number {processor.workInx}")
                         self.doneData[processor.workInx] = processor.outputData
                         self.doneInxs[processor.workInx] = True
+                        del (self.reqInxs[processor.workInx])
                         del (self.preload[processor.workInx])
 
                     processor.clearProcessor()
@@ -239,7 +262,8 @@ class CloudServer:
                     else:
                         workInx = self.workInxs.pop(0)
                     processor.provideNewWork(workInx, self.preload[workInx])
-
+                    self.reqInxs[workInx] = True
+            self.processLock.release()
             # Push to ffmpeg,
             while True:
                 if pushInx in self.doneData:
@@ -257,5 +281,5 @@ class CloudServer:
         pp.stdin.close()
         pp.wait()
 
-        for sock in self.clientSockets:
-            sock.close()
+        t.setName("dead-Preloader")
+        self.clearConvertValue()
