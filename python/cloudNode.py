@@ -11,6 +11,7 @@ from io import BytesIO
 def recvall(sock, n):
     data = bytearray()
     while len(data) < n:
+        sock.settimeout(10.0)
         packet = sock.recv(n - len(data))
         if not packet:
             continue
