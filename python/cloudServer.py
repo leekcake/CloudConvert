@@ -22,14 +22,14 @@ def recvall(sock, n):
 def get_length(input_video):
     result = subprocess.run(
         ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1',
-         input_video], stdout=subprocess.PIPE)  # , stderr=sys.stderr.buffer
+         input_video], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)  # , stderr=sys.stderr.buffer
     return float(result.stdout)
 
 
 def get_data(src, inx):
     result = subprocess.run(
         ['ffmpeg', '-i', src, '-ss', str(inx * 60), '-t', '60', '-c', 'copy', '-f', 'mpegts', '-'],
-        stdout=subprocess.PIPE)
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     return result.stdout
 
 
@@ -53,9 +53,9 @@ class Processor:
     def provideNewWork(self, inx, data):
         if self.InWork:
             raise Exception("Processor already in work")
-        self.InWork = True
         self.workData = data
         self.workInx = inx
+        self.InWork = True
         self.inValid = False
 
     def clearWorkData(self):
@@ -221,11 +221,10 @@ class CloudServer:
         # Open ffmpeg for combine
         pp = subprocess.Popen(['ffmpeg', '-f', 'mpegts', '-i', 'pipe:', "-c", "copy", "-y", dest],
                               stdout=sys.stdout.buffer,
-                              stdin=subprocess.PIPE, stderr=sys.stderr.buffer)
+                              stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
         pushInx = 0
         while True:
-            self.processLock.acquire()
             for processor in self.processors:
                 # If processor finished work and waiting for done
                 if processor.isMarkedAsFinished():
@@ -261,9 +260,12 @@ class CloudServer:
                             continue
                     else:
                         workInx = self.workInxs.pop(0)
+
+                    if workInx == -1:
+                        continue
+                    logging.info(f"New work request to processor, number {workInx}")
                     processor.provideNewWork(workInx, self.preload[workInx])
                     self.reqInxs[workInx] = True
-            self.processLock.release()
             # Push to ffmpeg,
             while True:
                 if pushInx in self.doneData:
