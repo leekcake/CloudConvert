@@ -75,7 +75,7 @@ class Processor:
         return self.workInx == -1
 
     def isCanStartWork(self):
-        return self.InWork and self.workData is not None
+        return self.InWork and self.workData is not None and not self.isFinish
 
 
 class CloudServer:
@@ -207,6 +207,9 @@ class CloudServer:
         if not self.started:
             raise Exception("convert before startServer")
 
+        start = time.time()
+        logging.info(f"New work({src}) started")
+
         t = threading.Thread(target=self._thread_preload, args=(src,))
         t.setName("live-Preloader")
         t.start()
@@ -285,3 +288,5 @@ class CloudServer:
 
         t.setName("dead-Preloader")
         self.clearConvertValue()
+
+        logging.info(f"New work({src}) converted in {time.time() - start} seconds")
