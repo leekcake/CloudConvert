@@ -3,8 +3,15 @@ import sys
 import time
 
 from python.cloudServer import CloudServer
+from python.selfNode import SelfNode
 
 if __name__ == '__main__':
+    In = sys.argv[1]
+    Out = sys.argv[2]
+    SelfNodeCount = 0
+    if len(sys.argv) > 3:
+        SelfNodeCount = int(sys.argv[3])
+
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
 
@@ -15,6 +22,11 @@ if __name__ == '__main__':
 
     server = CloudServer()
     server.startServer()
-    start = time.time()
-    server.convert(sys.argv[1], sys.argv[2])
-    print(f"Convert time in seconds: {time.time() - start}")
+
+    while SelfNodeCount != 0:
+        node = SelfNode()
+        node.attachToServer(server)
+        node.start()
+        SelfNodeCount -= 1
+
+    server.convert(In, Out)
