@@ -131,12 +131,15 @@ class CloudServer:
         self.processLock.release()
 
     def _thread_preload(self, src):
+        logging.info(f"Preloader{src} is started")
         while threading.currentThread().name.startswith("live"):
             for workInx in self.workInxs[:21]:
                 if workInx not in self.preload:
                     self.preload[workInx] = get_data(src, workInx)
 
             time.sleep(1)
+
+        logging.info(f"Preloader{src} is stopped")
 
     def _thread_client(self, clientSocket: socket.socket, addr):
         name = str(addr)
@@ -228,6 +231,7 @@ class CloudServer:
 
         pushInx = 0
         while True:
+            self.processLock.acquire()
             for processor in self.processors:
                 # If processor finished work and waiting for done
                 if processor.isMarkedAsFinished():
@@ -269,6 +273,8 @@ class CloudServer:
                     logging.info(f"New work request to processor, number {workInx}")
                     processor.provideNewWork(workInx, self.preload[workInx])
                     self.reqInxs[workInx] = True
+
+            self.processLock.release()
             # Push to ffmpeg,
             while True:
                 if pushInx in self.doneData:
@@ -281,12 +287,14 @@ class CloudServer:
             if pushInx == maxInx + 1:
                 break
 
-            time.sleep(0.1)
+            time.sleep(0.3)
 
         pp.stdin.close()
         pp.wait()
 
         t.setName("dead-Preloader")
+        while t.is_alive():
+            time.sleep(0.1)
         self.clearConvertValue()
 
         logging.info(f"New work({src}) converted in {time.time() - start} seconds")
