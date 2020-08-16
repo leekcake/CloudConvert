@@ -1,3 +1,4 @@
+import gc
 import logging
 import math
 import os
@@ -7,6 +8,7 @@ import sys
 import threading
 import time
 import uuid
+import traceback
 
 
 def recvall(sock, n):
@@ -85,6 +87,7 @@ class CloudServer:
         self.processLock = threading.Lock()
 
         self.workInxs = []
+        self.workInxLock = threading.Lock()
         self.preload = {}
         self.reqInxs = {}
         self.doneData = {}
@@ -126,17 +129,20 @@ class CloudServer:
         if processor.InWork and processor.workInx not in self.doneInxs and processor.workInx in self.reqInxs:
             logging.info(f"Work Inx: {processor.workInx} was re-requested because gone of processor")
             # if processor leave without finish work, re-register work
+            self.workInxLock.acquire()
             self.workInxs.insert(0, processor.workInx)
+            self.workInxLock.release()
         self.processors.remove(processor)
         self.processLock.release()
 
     def _thread_preload(self, src):
         logging.info(f"Preloader{src} is started")
         while threading.currentThread().name.startswith("live"):
+            self.workInxLock.acquire()
             for workInx in self.workInxs[:21]:
                 if workInx not in self.preload:
                     self.preload[workInx] = get_data(src, workInx)
-
+            self.workInxLock.release()
             time.sleep(1)
 
         logging.info(f"Preloader{src} is stopped")
@@ -192,7 +198,7 @@ class CloudServer:
                 # Yey, work was finished! wait for checkout from merger
 
         except Exception as e:
-            print(e)
+            logging.exception(e)
             pass
 
         try:
@@ -213,16 +219,16 @@ class CloudServer:
         start = time.time()
         logging.info(f"New work({src}) started")
 
-        t = threading.Thread(target=self._thread_preload, args=(src,))
-        t.setName("live-Preloader")
-        t.start()
-
         # Get Duration from file and make work inxs
         duration = get_length(src)
         maxInx = math.floor(duration / 60)
 
         for inx in range(maxInx + 1):
             self.workInxs.append(inx)
+
+        t = threading.Thread(target=self._thread_preload, args=(src,))
+        t.setName("live-Preloader")
+        t.start()
 
         # Open ffmpeg for combine
         pp = subprocess.Popen(['ffmpeg', '-f', 'mpegts', '-i', 'pipe:', "-c", "copy", "-y", dest],
@@ -232,6 +238,7 @@ class CloudServer:
         pushInx = 0
         while True:
             self.processLock.acquire()
+            self.workInxLock.acquire()
             for processor in self.processors:
                 # If processor finished work and waiting for done
                 if processor.isMarkedAsFinished():
@@ -259,12 +266,14 @@ class CloudServer:
                     # Provide work
                     workInx = -1
                     if len(self.workInxs) == 0:
-                        proc: Processor
-                        for proc in self.processors:
-                            if not proc.isIdle() and proc.workInx in self.preload:
-                                workInx = proc.workInx
+                        minReq = 1024 * 1024
+                        for inx in self.reqInxs.keys():
+                            if self.reqInxs[inx] < minReq:
+                                minReq = self.reqInxs[inx]
+                                workInx = inx
                         if workInx == -1:
                             continue
+                        self.reqInxs[workInx] += 1
                     else:
                         workInx = self.workInxs.pop(0)
 
@@ -272,9 +281,14 @@ class CloudServer:
                         continue
                     logging.info(f"New work request to processor, number {workInx}")
                     processor.provideNewWork(workInx, self.preload[workInx])
-                    self.reqInxs[workInx] = True
+                    if workInx in self.reqInxs:
+                        self.reqInxs[workInx] += 1
+                    else:
+                        self.reqInxs[workInx] = 1
+
 
             self.processLock.release()
+            self.workInxLock.release()
             # Push to ffmpeg,
             while True:
                 if pushInx in self.doneData:
@@ -298,3 +312,4 @@ class CloudServer:
         self.clearConvertValue()
 
         logging.info(f"New work({src}) converted in {time.time() - start} seconds")
+        gc.collect()
